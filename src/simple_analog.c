@@ -3,22 +3,24 @@
 #include "pebble.h"
 #define KEY_TIME 1
 #define KEY_VALUE 2
+// max 3 hours
+#define MAX_POINTS 36
 
 static Window *s_window;
-static Layer *s_simple_bg_layer, *s_hands_layer;
+static Layer *s_simple_bg_layer, *s_hands_layer, *spark_layer;
 static TextLayer *s_num_label;
 
-static GPath *s_minute_arrow, *s_hour_arrow;
+static GPath *s_minute_arrow, *s_hour_arrow, *line;
 static char s_num_buffer[5];
 
 static GColor status;
 
 typedef struct {
-  time_t measure_time;
-  int measured_value; // times 10, as floats are painful
+  time_t time;
+  int value; // times 10, as floats are painful
 } CGMValue;
 
-static CGMValue cgm_value_buffer[36]; // max 3 hours
+static CGMValue cgm_value_buffer[MAX_POINTS];
 static int cgm_value_index = 0;
 
 static void bg_update_proc(Layer *layer, GContext *ctx) {
@@ -41,7 +43,7 @@ static CGMValue get_cgm_value(int history) {
 }
 
 static void cgm_value_update() {
-  int current_value = get_cgm_value(0).measured_value;
+  int current_value = get_cgm_value(0).value;
   GColor newStatus;
   if (current_value == 0) {
     newStatus = GColorBlack;
@@ -66,14 +68,36 @@ static void cgm_value_update() {
   snprintf(decimal_buffer, 2, "%d", decimal);
   strcat(s_num_buffer, decimal_buffer);
   text_layer_set_text(s_num_label, s_num_buffer);
+APP_LOG(APP_LOG_LEVEL_INFO, "New value %d added at %d", current_value, cgm_value_index);
+  layer_mark_dirty(spark_layer);
 }
 
 static void add_cgm_value(time_t time, int value) {
-  if (cgm_value_index == sizeof(cgm_value_buffer) -1) {
+  if (cgm_value_index == MAX_POINTS -1) {
     cgm_value_index = -1;
   }
+APP_LOG(APP_LOG_LEVEL_INFO, "Adding value %d at %d", value, cgm_value_index);
+  
   cgm_value_buffer[++cgm_value_index] = (CGMValue) {time, value};
   cgm_value_update();
+}
+
+static void draw_spark(Layer *layer, GContext *ctx) {
+  GPoint points[MAX_POINTS];
+  time_t now = time(NULL);
+  int valid_points = 0;
+  graphics_context_set_fill_color(ctx, GColorBlack);
+  GRect bounds = layer_get_bounds(layer);
+  for (int i=0; i<MAX_POINTS; i++) {
+    CGMValue v = get_cgm_value(i);
+    if (v.value != 0) {
+      int x = MAX_POINTS * 2 - (now - v.time)/120; // 5 minute interval
+      int y = bounds.size.h - (int) (v.value/5);
+      points[i] = GPoint(x, y);
+      graphics_fill_circle(ctx, points[i], 1);
+//      APP_LOG(APP_LOG_LEVEL_INFO, "Drew a circle at %d, %d", x, y);
+    }
+  }
 }
 
 static void hands_update_proc(Layer *layer, GContext *ctx) {
@@ -101,7 +125,7 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
   APP_LOG(APP_LOG_LEVEL_INFO, "Message received!");
   Tuple *time_tuple = dict_find(iterator, KEY_TIME);
   Tuple *value_tuple = dict_find(iterator, KEY_VALUE);
-  add_cgm_value((time_t) time_tuple->value->uint32, value_tuple->value->int8);
+  add_cgm_value((time_t) time_tuple->value->uint32, value_tuple->value->int16);
 }
 
 static void inbox_dropped_callback(AppMessageResult reason, void *context) {
@@ -129,6 +153,14 @@ static void window_load(Window *window) {
   
   layer_add_child(window_layer, text_layer_get_layer(s_num_label));
 
+  spark_layer = layer_create(PBL_IF_ROUND_ELSE(
+    GRect(bounds.size.w/2-MAX_POINTS-2, 70, MAX_POINTS*2+4, 80),
+    GRect(bounds.size.w/2-MAX_POINTS-2, 47, MAX_POINTS*2+4, 80)));
+  layer_set_update_proc(spark_layer, draw_spark);
+  layer_add_child(window_layer, spark_layer);
+  
+
+  
   // mockup
   add_cgm_value(time(NULL), 56);
   cgm_value_update();
