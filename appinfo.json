@@ -1,5 +1,8 @@
 {
-    "appKeys": {},
+    "appKeys": {
+        "glucose": 2,
+        "time": 1
+    },
     "capabilities": [
         ""
     ],

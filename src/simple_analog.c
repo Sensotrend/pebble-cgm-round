@@ -1,6 +1,8 @@
 #include "simple_analog.h"
 
 #include "pebble.h"
+#define KEY_TIME 1
+#define KEY_VALUE 2
 
 static Window *s_window;
 static Layer *s_simple_bg_layer, *s_hands_layer;
@@ -55,7 +57,6 @@ static void cgm_value_update() {
   if(!status_changed) {
     status = newStatus;
     layer_mark_dirty(s_simple_bg_layer);
-    text_layer_set_text_color(s_num_label, status);
   }
   
   int decimal = (current_value%10);
@@ -83,19 +84,28 @@ static void hands_update_proc(Layer *layer, GContext *ctx) {
   struct tm *t = localtime(&now);
 
   // minute/hour hand
-  graphics_context_set_fill_color(ctx, GColorBlack);
+  graphics_context_set_fill_color(ctx, GColorDarkGray);
 
   gpath_rotate_to(s_minute_arrow, TRIG_MAX_ANGLE * t->tm_min / 60);
   gpath_draw_filled(ctx, s_minute_arrow);
 
   gpath_rotate_to(s_hour_arrow, (TRIG_MAX_ANGLE * (((t->tm_hour % 12) * 6) + (t->tm_min / 10))) / (12 * 6));
   gpath_draw_filled(ctx, s_hour_arrow);
-
-  printf(text_layer_get_text(s_num_label));
 }
 
 static void handle_tick(struct tm *tick_time, TimeUnits units_changed) {
   layer_mark_dirty(window_get_root_layer(s_window));
+}
+
+static void inbox_received_callback(DictionaryIterator *iterator, void *context) {
+  APP_LOG(APP_LOG_LEVEL_INFO, "Message received!");
+  Tuple *time_tuple = dict_find(iterator, KEY_TIME);
+  Tuple *value_tuple = dict_find(iterator, KEY_VALUE);
+  add_cgm_value((time_t) time_tuple->value->uint32, value_tuple->value->int8);
+}
+
+static void inbox_dropped_callback(AppMessageResult reason, void *context) {
+  APP_LOG(APP_LOG_LEVEL_WARNING, "Message dropped!");
 }
 
 static void window_load(Window *window) {
@@ -108,8 +118,8 @@ static void window_load(Window *window) {
   layer_add_child(window_layer, s_simple_bg_layer);
 
   s_num_label = text_layer_create(PBL_IF_ROUND_ELSE(
-    GRect(0, 40, bounds.size.w, 30),
-    GRect(0, 40, bounds.size.w, 30)));
+    GRect(0, 37, bounds.size.w, 30),
+    GRect(0, 37, bounds.size.w, 30)));
   
   text_layer_set_text(s_num_label, s_num_buffer);
   text_layer_set_background_color(s_num_label, GColorClear);
@@ -147,9 +157,10 @@ static void init() {
   });
   window_stack_push(s_window, true);
 
-  // s_num_buffer[0] = '\0';
-
-  // init hand paths
+  app_message_register_inbox_received(inbox_received_callback);
+  app_message_register_inbox_dropped(inbox_dropped_callback);
+  app_message_open(64, 8);
+  
   s_minute_arrow = gpath_create(&MINUTE_HAND_POINTS);
   s_hour_arrow = gpath_create(&HOUR_HAND_POINTS);
 
