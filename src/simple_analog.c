@@ -3,36 +3,76 @@
 #include "pebble.h"
 
 static Window *s_window;
-static Layer *s_simple_bg_layer, *s_date_layer, *s_hands_layer;
-static TextLayer *s_day_label, *s_num_label;
+static Layer *s_simple_bg_layer, *s_hands_layer;
+static TextLayer *s_num_label;
 
-static GPath *s_tick_paths[NUM_CLOCK_TICKS];
 static GPath *s_minute_arrow, *s_hour_arrow;
-static char s_num_buffer[4], s_day_buffer[6];
+static char s_num_buffer[5];
+
+static int cgm_value_buffer[288];
+static int cgm_value_index = 0;
+
+static GColor status;
 
 static void bg_update_proc(Layer *layer, GContext *ctx) {
   graphics_context_set_fill_color(ctx, GColorWhite);
   graphics_fill_rect(ctx, layer_get_bounds(layer), 0, GCornerNone);
-  /*
-  graphics_context_set_fill_color(ctx, GColorWhite);
-  for (int i = 0; i < NUM_CLOCK_TICKS; ++i) {
-    const int x_offset = PBL_IF_ROUND_ELSE(18, 0);
-    const int y_offset = PBL_IF_ROUND_ELSE(6, 0);
-    gpath_move_to(s_tick_paths[i], GPoint(x_offset, y_offset));
-    gpath_draw_filled(ctx, s_tick_paths[i]);
-  }
-  */
-  graphics_context_set_fill_color(ctx, PBL_IF_COLOR_ELSE(GColorBlueMoon, GColorWhite));
+  graphics_context_set_fill_color(ctx, status);
   #if defined(PBL_ROUND)
   graphics_fill_radial(ctx, layer_get_bounds(layer), GOvalScaleModeFitCircle, 25, 0, TRIG_MAX_ANGLE);
   #endif  
 }
 
+static int get_cgm_value(int history) {
+  int index;
+  if (history > cgm_value_index) {
+    index = sizeof(cgm_value_buffer) + cgm_value_index - history;
+  } else {
+    index = cgm_value_index - history;
+  }
+  return cgm_value_buffer[index];
+}
+
+static void cgm_value_update() {
+  int current_value = get_cgm_value(0);
+  GColor newStatus;
+  if (current_value == 0) {
+    newStatus = GColorBlack;
+  } else if (current_value < 40) {
+    newStatus = GColorRed;
+  } else if (current_value < 80) {
+    newStatus = GColorBlueMoon;
+  } else {
+    newStatus = GColorVividViolet;
+  }
+
+  bool status_changed = gcolor_equal(status, newStatus);
+  if(!status_changed) {
+    status = newStatus;
+    layer_mark_dirty(s_simple_bg_layer);
+    text_layer_set_text_color(s_num_label, status);
+  }
+  
+  int decimal = (current_value%10);
+  char decimal_buffer[2];
+  snprintf(s_num_buffer, sizeof(s_num_buffer), "%d", (int)current_value/10);
+  strcat(s_num_buffer, ".");
+  snprintf(decimal_buffer, 2, "%d", decimal);
+  strcat(s_num_buffer, decimal_buffer);
+  text_layer_set_text(s_num_label, s_num_buffer);
+}
+
+static void add_cgm_value(int value) {
+  if (cgm_value_index == sizeof(cgm_value_buffer) -1) {
+    cgm_value_index = -1;
+  }
+  cgm_value_buffer[++cgm_value_index] = value;
+  cgm_value_update();
+}
+
 static void hands_update_proc(Layer *layer, GContext *ctx) {
   GRect bounds = layer_get_bounds(layer);
   GPoint center = grect_center_point(&bounds);
-
-  const int16_t second_hand_length = PBL_IF_ROUND_ELSE((bounds.size.w / 2) - 19, bounds.size.w / 2);
 
   time_t now = time(NULL);
   struct tm *t = localtime(&now);
@@ -46,17 +86,7 @@ static void hands_update_proc(Layer *layer, GContext *ctx) {
   gpath_rotate_to(s_hour_arrow, (TRIG_MAX_ANGLE * (((t->tm_hour % 12) * 6) + (t->tm_min / 10))) / (12 * 6));
   gpath_draw_filled(ctx, s_hour_arrow);
 
-}
-
-static void date_update_proc(Layer *layer, GContext *ctx) {
-  time_t now = time(NULL);
-  struct tm *t = localtime(&now);
-
-  strftime(s_day_buffer, sizeof(s_day_buffer), "%a", t);
-  text_layer_set_text(s_day_label, s_day_buffer);
-
-  strftime(s_num_buffer, sizeof(s_num_buffer), "%d", t);
-  text_layer_set_text(s_num_label, s_num_buffer);
+  printf(text_layer_get_text(s_num_label));
 }
 
 static void handle_tick(struct tm *tick_time, TimeUnits units_changed) {
@@ -66,45 +96,39 @@ static void handle_tick(struct tm *tick_time, TimeUnits units_changed) {
 static void window_load(Window *window) {
   Layer *window_layer = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(window_layer);
-
+  printf("Here!");
+  status = GColorWhite;
   s_simple_bg_layer = layer_create(bounds);
   layer_set_update_proc(s_simple_bg_layer, bg_update_proc);
   layer_add_child(window_layer, s_simple_bg_layer);
 
-  s_date_layer = layer_create(bounds);
-  layer_set_update_proc(s_date_layer, date_update_proc);
-  layer_add_child(window_layer, s_date_layer);
-
-  s_day_label = text_layer_create(PBL_IF_ROUND_ELSE(
-    GRect(63, 114, 27, 20),
-    GRect(46, 114, 27, 20)));
-  text_layer_set_text(s_day_label, s_day_buffer);
-  text_layer_set_background_color(s_day_label, GColorBlack);
-  text_layer_set_text_color(s_day_label, GColorWhite);
-  text_layer_set_font(s_day_label, fonts_get_system_font(FONT_KEY_GOTHIC_18));
-
-  layer_add_child(s_date_layer, text_layer_get_layer(s_day_label));
-
   s_num_label = text_layer_create(PBL_IF_ROUND_ELSE(
-    GRect(90, 114, 18, 20),
-    GRect(73, 114, 18, 20)));
+    GRect(0, 40, bounds.size.w, 30),
+    GRect(0, 40, bounds.size.w, 30)));
+  
   text_layer_set_text(s_num_label, s_num_buffer);
-  text_layer_set_background_color(s_num_label, GColorBlack);
-  text_layer_set_text_color(s_num_label, GColorWhite);
-  text_layer_set_font(s_num_label, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
+  text_layer_set_background_color(s_num_label, GColorClear);
+  text_layer_set_text_color(s_num_label, GColorBlack);
+  text_layer_set_font(s_num_label, fonts_get_system_font(FONT_KEY_BITHAM_30_BLACK));
+  text_layer_set_text_alignment(s_num_label, GTextAlignmentCenter);
+  
+  layer_add_child(window_layer, text_layer_get_layer(s_num_label));
 
-  layer_add_child(s_date_layer, text_layer_get_layer(s_num_label));
-
+  // mockup
+  add_cgm_value(56);
+  cgm_value_update();
+  
+  printf(text_layer_get_text(s_num_label));
+  
   s_hands_layer = layer_create(bounds);
   layer_set_update_proc(s_hands_layer, hands_update_proc);
   layer_add_child(window_layer, s_hands_layer);
+
 }
 
 static void window_unload(Window *window) {
   layer_destroy(s_simple_bg_layer);
-  layer_destroy(s_date_layer);
 
-  text_layer_destroy(s_day_label);
   text_layer_destroy(s_num_label);
 
   layer_destroy(s_hands_layer);
@@ -118,8 +142,7 @@ static void init() {
   });
   window_stack_push(s_window, true);
 
-  s_day_buffer[0] = '\0';
-  s_num_buffer[0] = '\0';
+  // s_num_buffer[0] = '\0';
 
   // init hand paths
   s_minute_arrow = gpath_create(&MINUTE_HAND_POINTS);
@@ -131,20 +154,12 @@ static void init() {
   gpath_move_to(s_minute_arrow, center);
   gpath_move_to(s_hour_arrow, center);
 
-  for (int i = 0; i < NUM_CLOCK_TICKS; ++i) {
-    s_tick_paths[i] = gpath_create(&ANALOG_BG_POINTS[i]);
-  }
-
   tick_timer_service_subscribe(MINUTE_UNIT, handle_tick);
 }
 
 static void deinit() {
   gpath_destroy(s_minute_arrow);
   gpath_destroy(s_hour_arrow);
-
-  for (int i = 0; i < NUM_CLOCK_TICKS; ++i) {
-    gpath_destroy(s_tick_paths[i]);
-  }
 
   tick_timer_service_unsubscribe();
   window_destroy(s_window);
