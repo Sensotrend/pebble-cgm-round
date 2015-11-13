@@ -68,7 +68,7 @@ static void cgm_value_update() {
   snprintf(decimal_buffer, 2, "%d", decimal);
   strcat(s_num_buffer, decimal_buffer);
   text_layer_set_text(s_num_label, s_num_buffer);
-APP_LOG(APP_LOG_LEVEL_INFO, "New value %d added at %d", current_value, cgm_value_index);
+//  APP_LOG(APP_LOG_LEVEL_INFO, "New value %d added at %d", current_value, cgm_value_index);
   layer_mark_dirty(spark_layer);
 }
 
@@ -76,7 +76,7 @@ static void add_cgm_value(time_t time, int value) {
   if (cgm_value_index == MAX_POINTS -1) {
     cgm_value_index = -1;
   }
-APP_LOG(APP_LOG_LEVEL_INFO, "Adding value %d at %d", value, cgm_value_index);
+//  APP_LOG(APP_LOG_LEVEL_INFO, "Adding value %d at %d", value, cgm_value_index);
   
   cgm_value_buffer[++cgm_value_index] = (CGMValue) {time, value};
   cgm_value_update();
@@ -159,18 +159,9 @@ static void window_load(Window *window) {
   layer_set_update_proc(spark_layer, draw_spark);
   layer_add_child(window_layer, spark_layer);
   
-
-  
-  // mockup
-  add_cgm_value(time(NULL), 56);
-  cgm_value_update();
-  
-  printf(text_layer_get_text(s_num_label));
-  
   s_hands_layer = layer_create(bounds);
   layer_set_update_proc(s_hands_layer, hands_update_proc);
   layer_add_child(window_layer, s_hands_layer);
-
 }
 
 static void window_unload(Window *window) {
