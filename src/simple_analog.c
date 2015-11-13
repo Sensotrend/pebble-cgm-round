@@ -88,16 +88,17 @@ static void draw_spark(Layer *layer, GContext *ctx) {
   int valid_points = 0;
   graphics_context_set_fill_color(ctx, GColorBlack);
   GRect bounds = layer_get_bounds(layer);
-  for (int i=0; i<MAX_POINTS; i++) {
+  for (int i=MAX_POINTS; i>=0; i--) {
     CGMValue v = get_cgm_value(i);
     if (v.value != 0) {
       int x = MAX_POINTS * 2 - (now - v.time)/120; // 5 minute interval
       int y = bounds.size.h - (int) (v.value/5);
       points[i] = GPoint(x, y);
-      graphics_fill_circle(ctx, points[i], 1);
+      graphics_fill_circle(ctx, points[i], i==0 ? 3 : 1); // most recent is bigger!
 //      APP_LOG(APP_LOG_LEVEL_INFO, "Drew a circle at %d, %d", x, y);
     }
   }
+  
 }
 
 static void hands_update_proc(Layer *layer, GContext *ctx) {
