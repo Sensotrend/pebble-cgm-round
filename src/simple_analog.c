@@ -35,7 +35,7 @@ static void bg_update_proc(Layer *layer, GContext *ctx) {
 static CGMValue get_cgm_value(int history) {
   int index;
   if (history > cgm_value_index) {
-    index = sizeof(cgm_value_buffer) + cgm_value_index - history;
+    index = MAX_POINTS + cgm_value_index - history;
   } else {
     index = cgm_value_index - history;
   }
