@@ -9,10 +9,15 @@ static TextLayer *s_num_label;
 static GPath *s_minute_arrow, *s_hour_arrow;
 static char s_num_buffer[5];
 
-static int cgm_value_buffer[288];
-static int cgm_value_index = 0;
-
 static GColor status;
+
+typedef struct {
+  time_t measure_time;
+  int measured_value; // times 10, as floats are painful
+} CGMValue;
+
+static CGMValue cgm_value_buffer[36]; // max 3 hours
+static int cgm_value_index = 0;
 
 static void bg_update_proc(Layer *layer, GContext *ctx) {
   graphics_context_set_fill_color(ctx, GColorWhite);
@@ -23,7 +28,7 @@ static void bg_update_proc(Layer *layer, GContext *ctx) {
   #endif  
 }
 
-static int get_cgm_value(int history) {
+static CGMValue get_cgm_value(int history) {
   int index;
   if (history > cgm_value_index) {
     index = sizeof(cgm_value_buffer) + cgm_value_index - history;
@@ -34,7 +39,7 @@ static int get_cgm_value(int history) {
 }
 
 static void cgm_value_update() {
-  int current_value = get_cgm_value(0);
+  int current_value = get_cgm_value(0).measured_value;
   GColor newStatus;
   if (current_value == 0) {
     newStatus = GColorBlack;
@@ -62,11 +67,11 @@ static void cgm_value_update() {
   text_layer_set_text(s_num_label, s_num_buffer);
 }
 
-static void add_cgm_value(int value) {
+static void add_cgm_value(time_t time, int value) {
   if (cgm_value_index == sizeof(cgm_value_buffer) -1) {
     cgm_value_index = -1;
   }
-  cgm_value_buffer[++cgm_value_index] = value;
+  cgm_value_buffer[++cgm_value_index] = (CGMValue) {time, value};
   cgm_value_update();
 }
 
@@ -115,7 +120,7 @@ static void window_load(Window *window) {
   layer_add_child(window_layer, text_layer_get_layer(s_num_label));
 
   // mockup
-  add_cgm_value(56);
+  add_cgm_value(time(NULL), 56);
   cgm_value_update();
   
   printf(text_layer_get_text(s_num_label));
