@@ -1,4 +1,4 @@
-#include "simple_analog.h"
+#include "sensotrend_cgm.h"
 
 #include "pebble.h"
 #define KEY_TIME 1
