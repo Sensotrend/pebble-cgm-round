@@ -1,20 +1,30 @@
 #include "sensotrend_cgm.h"
 
 #include "pebble.h"
+#define HAND_MAX_RADIUS 55
+#define HAND_MARGIN  10
 #define KEY_TIME 1
 #define KEY_VALUE 2
 // max 3 hours
 #define MAX_POINTS 36
 
+
 static Window *s_window;
 static Layer *s_simple_bg_layer, *s_hands_layer, *spark_layer;
 static TextLayer *s_num_label;
 
-static GPath *s_minute_arrow, *s_hour_arrow, *line;
 static char s_num_buffer[5];
 
 static GColor status;
 
+typedef struct {
+  int hours;
+  int minutes;
+} Time;
+
+//static GPoint s_center;
+static Time s_last_time;
+  
 typedef struct {
   time_t time;
   int value; // times 10, as floats are painful
@@ -55,8 +65,8 @@ static void cgm_value_update() {
     newStatus = GColorVividViolet;
   }
 
-  bool status_changed = gcolor_equal(status, newStatus);
-  if(!status_changed) {
+  bool status_changed = !gcolor_equal(status, newStatus);
+  if(status_changed) {
     status = newStatus;
     layer_mark_dirty(s_simple_bg_layer);
   }
@@ -68,7 +78,7 @@ static void cgm_value_update() {
   snprintf(decimal_buffer, 2, "%d", decimal);
   strcat(s_num_buffer, decimal_buffer);
   text_layer_set_text(s_num_label, s_num_buffer);
-//  APP_LOG(APP_LOG_LEVEL_INFO, "New value %d added at %d", current_value, cgm_value_index);
+  // APP_LOG(APP_LOG_LEVEL_INFO, "New value %d added at %d", current_value, cgm_value_index);
   layer_mark_dirty(spark_layer);
 }
 
@@ -76,16 +86,15 @@ static void add_cgm_value(time_t time, int value) {
   if (cgm_value_index == MAX_POINTS -1) {
     cgm_value_index = -1;
   }
-//  APP_LOG(APP_LOG_LEVEL_INFO, "Adding value %d at %d", value, cgm_value_index);
-  
+  // APP_LOG(APP_LOG_LEVEL_INFO, "Adding value %d at %d", value, cgm_value_index);
   cgm_value_buffer[++cgm_value_index] = (CGMValue) {time, value};
   cgm_value_update();
 }
 
 static void draw_spark(Layer *layer, GContext *ctx) {
+  graphics_context_set_antialiased(ctx, true);
   GPoint points[MAX_POINTS];
   time_t now = time(NULL);
-  int valid_points = 0;
   graphics_context_set_fill_color(ctx, GColorBlack);
   GRect bounds = layer_get_bounds(layer);
   for (int i=MAX_POINTS; i>=0; i--) {
@@ -95,30 +104,45 @@ static void draw_spark(Layer *layer, GContext *ctx) {
       int y = bounds.size.h - (int) (v.value/5);
       points[i] = GPoint(x, y);
       graphics_fill_circle(ctx, points[i], i==0 ? 3 : 1); // most recent is bigger!
-//      APP_LOG(APP_LOG_LEVEL_INFO, "Drew a circle at %d, %d", x, y);
+      // APP_LOG(APP_LOG_LEVEL_INFO, "Drew a circle at %d, %d", x, y);
     }
   }
-  
 }
 
 static void hands_update_proc(Layer *layer, GContext *ctx) {
+
+  graphics_context_set_antialiased(ctx, true);
+  
   GRect bounds = layer_get_bounds(layer);
   GPoint center = grect_center_point(&bounds);
 
-  time_t now = time(NULL);
-  struct tm *t = localtime(&now);
+  // Adjust for minutes through the hour
+  float minute_angle = TRIG_MAX_ANGLE * s_last_time.minutes / 60;
+  float hour_angle = TRIG_MAX_ANGLE * s_last_time.hours / 12;
+  hour_angle += (minute_angle / TRIG_MAX_ANGLE) * (TRIG_MAX_ANGLE / 12);
 
-  // minute/hour hand
-  graphics_context_set_fill_color(ctx, GColorDarkGray);
+  // Plot hands
+  GPoint minute_hand = (GPoint) {
+    .x = (int16_t)(sin_lookup(TRIG_MAX_ANGLE * s_last_time.minutes / 60) * (int32_t)(HAND_MAX_RADIUS - HAND_MARGIN) / TRIG_MAX_RATIO) + center.x,
+    .y = (int16_t)(-cos_lookup(TRIG_MAX_ANGLE * s_last_time.minutes / 60) * (int32_t)(HAND_MAX_RADIUS - HAND_MARGIN) / TRIG_MAX_RATIO) + center.y,
+  };
+  GPoint hour_hand = (GPoint) {
+    .x = (int16_t)(sin_lookup(hour_angle) * (int32_t)(HAND_MAX_RADIUS - (2 * HAND_MARGIN)) / TRIG_MAX_RATIO) + center.x,
+    .y = (int16_t)(-cos_lookup(hour_angle) * (int32_t)(HAND_MAX_RADIUS - (2 * HAND_MARGIN)) / TRIG_MAX_RATIO) + center.y,
+  };
 
-  gpath_rotate_to(s_minute_arrow, TRIG_MAX_ANGLE * t->tm_min / 60);
-  gpath_draw_filled(ctx, s_minute_arrow);
-
-  gpath_rotate_to(s_hour_arrow, (TRIG_MAX_ANGLE * (((t->tm_hour % 12) * 6) + (t->tm_min / 10))) / (12 * 6));
-  gpath_draw_filled(ctx, s_hour_arrow);
+  graphics_context_set_stroke_width(ctx, 4);
+  graphics_draw_line(ctx, center, hour_hand);
+//  graphics_context_set_stroke_width(ctx, 3);
+  graphics_draw_line(ctx, center, minute_hand);
 }
 
 static void handle_tick(struct tm *tick_time, TimeUnits units_changed) {
+  // Store time
+  s_last_time.hours = tick_time->tm_hour;
+  s_last_time.hours -= (s_last_time.hours > 12) ? 12 : 0;
+  s_last_time.minutes = tick_time->tm_min;
+  
   layer_mark_dirty(window_get_root_layer(s_window));
 }
 
@@ -136,7 +160,6 @@ static void inbox_dropped_callback(AppMessageResult reason, void *context) {
 static void window_load(Window *window) {
   Layer *window_layer = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(window_layer);
-  printf("Here!");
   status = GColorWhite;
   s_simple_bg_layer = layer_create(bounds);
   layer_set_update_proc(s_simple_bg_layer, bg_update_proc);
@@ -185,22 +208,10 @@ static void init() {
   app_message_register_inbox_dropped(inbox_dropped_callback);
   app_message_open(64, 8);
   
-  s_minute_arrow = gpath_create(&MINUTE_HAND_POINTS);
-  s_hour_arrow = gpath_create(&HOUR_HAND_POINTS);
-
-  Layer *window_layer = window_get_root_layer(s_window);
-  GRect bounds = layer_get_bounds(window_layer);
-  GPoint center = grect_center_point(&bounds);
-  gpath_move_to(s_minute_arrow, center);
-  gpath_move_to(s_hour_arrow, center);
-
   tick_timer_service_subscribe(MINUTE_UNIT, handle_tick);
 }
 
 static void deinit() {
-  gpath_destroy(s_minute_arrow);
-  gpath_destroy(s_hour_arrow);
-
   tick_timer_service_unsubscribe();
   window_destroy(s_window);
 }
