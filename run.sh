@@ -1,0 +1,1 @@
+pebble install --emulator chalk
